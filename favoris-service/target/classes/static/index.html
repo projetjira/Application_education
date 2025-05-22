@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service de Favoris</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #2980b9;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 10px;
+        }
+        code {
+            background-color: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .api-link {
+            display: block;
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #e8f4fc;
+            border-left: 4px solid #3498db;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Service de Favoris</h1>
+        <p>Bienvenue sur l'API du service de gestion des favoris.</p>
+        
+        <h2>Documentation de l'API</h2>
+        <p>Pour accéder à la documentation complète de l'API avec Swagger UI :</p>
+        <a href="/swagger-ui/index.html" class="api-link">/swagger-ui/index.html</a>
+        
+        <h2>Points d'accès principaux</h2>
+        <ul>
+            <li>
+                <strong>Récupérer les favoris d'un utilisateur :</strong>
+                <code>/api/favorites/user/{userId}</code>
+            </li>
+            <li>
+                <strong>Récupérer les favoris par type :</strong>
+                <code>/api/favorites/user/{userId}/type/{contentType}</code>
+            </li>
+            <li>
+                <strong>Ajouter un favori :</strong>
+                <code>POST /api/favorites</code>
+            </li>
+            <li>
+                <strong>Supprimer un favori :</strong>
+                <code>DELETE /api/favorites/user/{userId}/content/{contentId}</code>
+            </li>
+            <li>
+                <strong>Basculer l'état d'un favori :</strong>
+                <code>POST /api/favorites/toggle</code>
+            </li>
+        </ul>
+    </div>
+</body>
+</html>
