@@ -9,6 +9,7 @@
         <li><a [routerLink]="['/dashboard']" routerLinkActive="active">Dashboard</a></li>
         <li><a [routerLink]="['/students']" routerLinkActive="active">Students</a></li>
         <li><a [routerLink]="['/professors']" routerLinkActive="active">Professors</a></li>
+        <li><a [routerLink]="['/collaboration']" routerLinkActive="active">Collaboration</a></li>
       </ul>
       <div class="user-menu">
         <span class="user-name" *ngIf="adminName">{{ adminName }}</span>
@@ -42,6 +43,16 @@
         <div class="card-content">
           <h3>Professors</h3>
           <p>Manage professor accounts</p>
+        </div>
+      </div>
+
+      <div class="card" (click)="navigateToCollaboration()">
+        <div class="card-icon">
+          <i class="fas fa-users"></i>
+        </div>
+        <div class="card-content">
+          <h3>Collaboration</h3>
+          <p>Manage student collaboration groups</p>
         </div>
       </div>
     </div>

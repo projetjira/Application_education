@@ -7,6 +7,7 @@ import { StudentFormComponent } from './features/students/student-form/student-f
 import { ProfessorListComponent } from './features/professors/professor-list/professor-list.component';
 import { ProfessorFormComponent } from './features/professors/professor-form/professor-form.component';
 import { DashboardComponent } from './features/dashboard/dashboard.component';
+import { CollaborationGroupsComponent } from './features/collaboration/collaboration-groups/collaboration-groups.component';
 
 export const routes: Routes = [
   { path: 'login', component: LoginComponent },
@@ -31,6 +32,14 @@ export const routes: Routes = [
       { path: '', component: ProfessorListComponent },
       { path: 'add', component: ProfessorFormComponent },
       { path: 'edit/:id', component: ProfessorFormComponent }
+    ]
+  },
+  {
+    path: 'collaboration',
+    canActivate: [AuthGuard],
+    children: [
+      { path: '', redirectTo: 'groups', pathMatch: 'full' },
+      { path: 'groups', component: CollaborationGroupsComponent }
     ]
   },
   { path: '', redirectTo: '/login', pathMatch: 'full' }, // Redirect to login by default

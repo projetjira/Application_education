@@ -37,4 +37,8 @@ export class DashboardComponent implements OnInit {
   navigateToProfessors(): void {
     this.router.navigate(['/professors']);
   }
+
+  navigateToCollaboration(): void {
+    this.router.navigate(['/collaboration']);
+  }
 }
