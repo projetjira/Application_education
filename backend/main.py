@@ -173,7 +173,7 @@ class AdminLogin(BaseModel):
 @app.get("/")
 def root():
     return {
-        "message": "Welcome to the Student Management API",
+        "message": "Welcome to the University Platform API",
         "endpoints": {
             "test_db": "/test-db",
             "add_student": "/addstudent",
