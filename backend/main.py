@@ -82,6 +82,64 @@ try:
     """)
     database.commit()
     
+    # Create collaboration tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS collaboration_groups (
+            group_id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT TRUE,
+            FOREIGN KEY (created_by) REFERENCES STUDENTS(students_id) ON DELETE CASCADE
+        )
+    """)
+    database.commit()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS group_members (
+            member_id INT AUTO_INCREMENT PRIMARY KEY,
+            group_id INT NOT NULL,
+            student_id INT NOT NULL,
+            role ENUM('member', 'admin') DEFAULT 'member',
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES collaboration_groups(group_id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES STUDENTS(students_id) ON DELETE CASCADE,
+            UNIQUE KEY unique_group_member (group_id, student_id)
+        )
+    """)
+    database.commit()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS discussions (
+            discussion_id INT AUTO_INCREMENT PRIMARY KEY,
+            group_id INT NOT NULL,
+            title VARCHAR(200) NOT NULL,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_pinned BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (group_id) REFERENCES collaboration_groups(group_id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES STUDENTS(students_id) ON DELETE CASCADE
+        )
+    """)
+    database.commit()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            message_id INT AUTO_INCREMENT PRIMARY KEY,
+            discussion_id INT NOT NULL,
+            author_id INT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            is_edited BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (discussion_id) REFERENCES discussions(discussion_id) ON DELETE CASCADE,
+            FOREIGN KEY (author_id) REFERENCES STUDENTS(students_id) ON DELETE CASCADE
+        )
+    """)
+    database.commit()
+    
     db_connected = True
     print("Successfully connected to the database")
 except Exception as e:
@@ -170,6 +228,31 @@ class AdminLogin(BaseModel):
     email: str
     password: str
 
+# Collaboration Models
+class CollaborationGroup(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class CollaborationGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class Discussion(BaseModel):
+    title: str
+    group_id: int
+
+class Message(BaseModel):
+    content: str
+    discussion_id: int
+
+class MessageUpdate(BaseModel):
+    content: str
+
+class GroupMember(BaseModel):
+    student_id: int
+    role: Optional[str] = "member"
+
 @app.get("/")
 def root():
     return {
@@ -185,7 +268,14 @@ def root():
             "admin_login": "/admin/login",
             "admin_register": "/admin/register",
             "admin_students": "/admin/students",
-            "admin_professors": "/admin/professors"
+            "admin_professors": "/admin/professors",
+            "collaboration": {
+                "groups": "/collaboration/groups",
+                "create_group": "/collaboration/groups",
+                "join_group": "/collaboration/groups/{group_id}/members",
+                "discussions": "/collaboration/groups/{group_id}/discussions",
+                "messages": "/collaboration/discussions/{discussion_id}/messages"
+            }
         }
     }
 
@@ -606,6 +696,308 @@ def get_professor(professor_id: int):
         if not professor:
             raise HTTPException(status_code=404, detail="Professor not found")
         return professor
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===============================
+# COLLABORATION ENDPOINTS
+# ===============================
+
+@app.post("/collaboration/groups")
+def create_collaboration_group(group: CollaborationGroup, created_by: int = Query(..., description="Student ID creating the group")):
+    """Create a new collaboration group"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if student exists
+        cursor.execute("SELECT students_id FROM STUDENTS WHERE students_id = %s", (created_by,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Student not found")
+        
+        # Create the group
+        sql = """INSERT INTO collaboration_groups (name, description, created_by) VALUES (%s, %s, %s)"""
+        values = (group.name, group.description, created_by)
+        cursor.execute(sql, values)
+        database.commit()
+        
+        group_id = cursor.lastrowid
+        
+        # Add creator as admin member
+        cursor.execute("""
+            INSERT INTO group_members (group_id, student_id, role) VALUES (%s, %s, 'admin')
+        """, (group_id, created_by))
+        database.commit()
+        
+        # Return the created group
+        cursor.execute("""
+            SELECT cg.*, s.name as creator_name 
+            FROM collaboration_groups cg 
+            JOIN STUDENTS s ON cg.created_by = s.students_id 
+            WHERE cg.group_id = %s
+        """, (group_id,))
+        new_group = cursor.fetchone()
+        
+        return {
+            "message": "Group created successfully",
+            "group": new_group
+        }
+    except Exception as e:
+        database.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/collaboration/groups")
+def get_collaboration_groups(student_id: Optional[int] = Query(None, description="Filter groups by student membership")):
+    """Get all collaboration groups or groups for a specific student"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        if student_id:
+            # Get groups where student is a member
+            sql = """
+                SELECT cg.*, s.name as creator_name, gm.role as member_role,
+                       COUNT(DISTINCT gm2.member_id) as member_count
+                FROM collaboration_groups cg
+                JOIN STUDENTS s ON cg.created_by = s.students_id
+                JOIN group_members gm ON cg.group_id = gm.group_id AND gm.student_id = %s
+                LEFT JOIN group_members gm2 ON cg.group_id = gm2.group_id
+                WHERE cg.is_active = TRUE
+                GROUP BY cg.group_id, gm.role
+                ORDER BY cg.updated_at DESC
+            """
+            cursor.execute(sql, (student_id,))
+        else:
+            # Get all active groups
+            sql = """
+                SELECT cg.*, s.name as creator_name,
+                       COUNT(DISTINCT gm.member_id) as member_count
+                FROM collaboration_groups cg
+                JOIN STUDENTS s ON cg.created_by = s.students_id
+                LEFT JOIN group_members gm ON cg.group_id = gm.group_id
+                WHERE cg.is_active = TRUE
+                GROUP BY cg.group_id
+                ORDER BY cg.updated_at DESC
+            """
+            cursor.execute(sql)
+        
+        groups = cursor.fetchall()
+        return {"groups": groups}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/collaboration/groups/{group_id}/members")
+def join_collaboration_group(group_id: int, member: GroupMember):
+    """Add a student to a collaboration group"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if group exists and is active
+        cursor.execute("SELECT * FROM collaboration_groups WHERE group_id = %s AND is_active = TRUE", (group_id,))
+        group = cursor.fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="Group not found or inactive")
+        
+        # Check if student exists
+        cursor.execute("SELECT students_id FROM STUDENTS WHERE students_id = %s", (member.student_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Student not found")
+        
+        # Check if student is already a member
+        cursor.execute("SELECT * FROM group_members WHERE group_id = %s AND student_id = %s", 
+                      (group_id, member.student_id))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Student is already a member of this group")
+        
+        # Add member to group
+        cursor.execute("""
+            INSERT INTO group_members (group_id, student_id, role) VALUES (%s, %s, %s)
+        """, (group_id, member.student_id, member.role))
+        database.commit()
+        
+        return {"message": "Successfully joined group", "group_id": group_id, "student_id": member.student_id}
+    except HTTPException:
+        database.rollback()
+        raise
+    except Exception as e:
+        database.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/collaboration/groups/{group_id}/members")
+def get_group_members(group_id: int):
+    """Get all members of a collaboration group"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if group exists
+        cursor.execute("SELECT * FROM collaboration_groups WHERE group_id = %s", (group_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Group not found")
+        
+        # Get group members
+        cursor.execute("""
+            SELECT gm.*, s.name, s.email, s.department
+            FROM group_members gm
+            JOIN STUDENTS s ON gm.student_id = s.students_id
+            WHERE gm.group_id = %s
+            ORDER BY gm.role DESC, gm.joined_at ASC
+        """, (group_id,))
+        
+        members = cursor.fetchall()
+        return {"members": members}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/collaboration/groups/{group_id}/discussions")
+def create_discussion(group_id: int, discussion: Discussion, created_by: int = Query(..., description="Student ID creating the discussion")):
+    """Create a new discussion in a collaboration group"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if user is a member of the group
+        cursor.execute("""
+            SELECT * FROM group_members WHERE group_id = %s AND student_id = %s
+        """, (group_id, created_by))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=403, detail="You must be a member of the group to create discussions")
+        
+        # Create discussion
+        cursor.execute("""
+            INSERT INTO discussions (group_id, title, created_by) VALUES (%s, %s, %s)
+        """, (group_id, discussion.title, created_by))
+        database.commit()
+        
+        discussion_id = cursor.lastrowid
+        
+        # Return the created discussion
+        cursor.execute("""
+            SELECT d.*, s.name as creator_name
+            FROM discussions d
+            JOIN STUDENTS s ON d.created_by = s.students_id
+            WHERE d.discussion_id = %s
+        """, (discussion_id,))
+        new_discussion = cursor.fetchone()
+        
+        return {
+            "message": "Discussion created successfully",
+            "discussion": new_discussion
+        }
+    except HTTPException:
+        database.rollback()
+        raise
+    except Exception as e:
+        database.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/collaboration/groups/{group_id}/discussions")
+def get_group_discussions(group_id: int):
+    """Get all discussions for a collaboration group"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if group exists
+        cursor.execute("SELECT * FROM collaboration_groups WHERE group_id = %s", (group_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Group not found")
+        
+        # Get discussions
+        cursor.execute("""
+            SELECT d.*, s.name as creator_name,
+                   COUNT(m.message_id) as message_count
+            FROM discussions d
+            JOIN STUDENTS s ON d.created_by = s.students_id
+            LEFT JOIN messages m ON d.discussion_id = m.discussion_id
+            WHERE d.group_id = %s
+            GROUP BY d.discussion_id
+            ORDER BY d.is_pinned DESC, d.created_at DESC
+        """, (group_id,))
+        
+        discussions = cursor.fetchall()
+        return {"discussions": discussions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/collaboration/discussions/{discussion_id}/messages")
+def create_message(discussion_id: int, message: Message, author_id: int = Query(..., description="Student ID creating the message")):
+    """Create a new message in a discussion"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if discussion exists and user has access
+        cursor.execute("""
+            SELECT d.*, gm.student_id
+            FROM discussions d
+            JOIN group_members gm ON d.group_id = gm.group_id
+            WHERE d.discussion_id = %s AND gm.student_id = %s
+        """, (discussion_id, author_id))
+        
+        if not cursor.fetchone():
+            raise HTTPException(status_code=403, detail="Access denied or discussion not found")
+        
+        # Create message
+        cursor.execute("""
+            INSERT INTO messages (discussion_id, author_id, content) VALUES (%s, %s, %s)
+        """, (discussion_id, author_id, message.content))
+        database.commit()
+        
+        message_id = cursor.lastrowid
+        
+        # Return the created message
+        cursor.execute("""
+            SELECT m.*, s.name as author_name
+            FROM messages m
+            JOIN STUDENTS s ON m.author_id = s.students_id
+            WHERE m.message_id = %s
+        """, (message_id,))
+        new_message = cursor.fetchone()
+        
+        return {
+            "message": "Message created successfully",
+            "message_data": new_message
+        }
+    except HTTPException:
+        database.rollback()
+        raise
+    except Exception as e:
+        database.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/collaboration/discussions/{discussion_id}/messages")
+def get_discussion_messages(discussion_id: int, student_id: int = Query(..., description="Student ID requesting messages")):
+    """Get all messages in a discussion"""
+    if not db_connected:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+    
+    try:
+        # Check if user has access to this discussion
+        cursor.execute("""
+            SELECT d.*
+            FROM discussions d
+            JOIN group_members gm ON d.group_id = gm.group_id
+            WHERE d.discussion_id = %s AND gm.student_id = %s
+        """, (discussion_id, student_id))
+        
+        if not cursor.fetchone():
+            raise HTTPException(status_code=403, detail="Access denied or discussion not found")
+        
+        # Get messages
+        cursor.execute("""
+            SELECT m.*, s.name as author_name
+            FROM messages m
+            JOIN STUDENTS s ON m.author_id = s.students_id
+            WHERE m.discussion_id = %s
+            ORDER BY m.created_at ASC
+        """, (discussion_id,))
+        
+        messages = cursor.fetchall()
+        return {"messages": messages}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
